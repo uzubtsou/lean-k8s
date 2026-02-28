@@ -10,8 +10,11 @@ Local Kubernetes configurations for development. This repo collects minimal, wor
 
 ```bash
 just          # list all available recipes
-just k3d-up   # create a k3d cluster
-just k3d-down # delete the k3d cluster
+just up       # create the sandpit cluster
+just down     # delete the sandpit cluster
+just stop     # stop the sandpit cluster
+just start    # start a stopped cluster
+just status   # show active clusters and installed addons
 ```
 
 ## Configurations
@@ -22,7 +25,7 @@ just k3d-down # delete the k3d cluster
 
 ### Addons
 
-_Coming soon._
+- [FluxCD](./addons/gitops/) - GitOps continuous delivery
 
 ---
 
@@ -39,10 +42,10 @@ k3d requires a Docker-compatible runtime. Common options on macOS include Docker
 ### Cluster management
 
 ```bash
-just k3d-up    # create cluster
-just k3d-down  # delete cluster
-just k3d-stop  # stop cluster
-just k3d-start # start stopped cluster
+just up    # create cluster
+just down  # delete cluster
+just stop  # stop cluster
+just start # start stopped cluster
 ```
 
 The config creates a cluster named `lean-k8s` with 1 server, 2 agent nodes, and ports 80/443 exposed via the load balancer. Kubeconfig is updated automatically.
