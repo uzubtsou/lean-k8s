@@ -1,4 +1,5 @@
 ---
 global:
+  domain: argocd.sand.pit.im
   additionalLabels:
     sand.pit.im/addon: argocd

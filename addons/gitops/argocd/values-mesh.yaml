@@ -1,0 +1,10 @@
+---
+configs:
+  params:
+    server.insecure: true
+server:
+  httproute:
+    enabled: true
+    parentRefs:
+      - name: sandpit
+        namespace: istio-ingress

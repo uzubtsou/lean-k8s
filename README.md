@@ -19,19 +19,22 @@ just status   # show active clusters and installed addons
 
 ### Installing addons
 
-Addons are installed into a running cluster with `just add <addon>`. Only one GitOps provider can be active at a time — installing a second one will print an error and exit cleanly.
+Addons are grouped by category. Each category has a default provider.
 
 ```bash
-just add flux    # install FluxCD
-just add argocd  # install ArgoCD
+just mesh              # install Istio (default mesh provider)
+just gitops argocd     # install ArgoCD
+just stack             # install everything: mesh + gitops
 ```
 
-To switch providers, recreate the cluster:
+Only one GitOps provider can be active at a time — installing a second one will print an error. To switch providers, recreate the cluster:
 
 ```bash
 just down && just up
-just add argocd
+just gitops flux
 ```
+
+When Istio is installed, `just gitops argocd` automatically detects it and configures an HTTPRoute so ArgoCD is reachable at `http://argocd.sand.pit.im`.
 
 ## Configurations
 
@@ -41,8 +44,14 @@ just add argocd
 
 ### Addons
 
-- [FluxCD](./addons/gitops/flux/) - GitOps continuous delivery
-- [ArgoCD](./addons/gitops/argocd/) - GitOps continuous delivery (installed via Helm)
+**Networking / Mesh**
+
+- [Istio](./addons/networking/istio/) - Service mesh with Gateway API (`just mesh istio`)
+
+**GitOps**
+
+- [FluxCD](./addons/gitops/flux/) - GitOps continuous delivery (`just gitops flux`)
+- [ArgoCD](./addons/gitops/argocd/) - GitOps continuous delivery via Helm (`just gitops argocd`)
 
 ---
 
@@ -65,4 +74,4 @@ just stop  # stop cluster
 just start # start stopped cluster
 ```
 
-The config creates a cluster named `lean-k8s` with 1 server, 2 agent nodes, and ports 80/443 exposed via the load balancer. Kubeconfig is updated automatically.
+The config creates a cluster named `sandpit` with 1 server, 2 agent nodes, and ports 80/443 exposed via the load balancer. Kubeconfig is updated automatically. DNS is handled by a Route53 wildcard record — `*.sand.pit.im` resolves to `127.0.0.1`.
