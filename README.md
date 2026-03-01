@@ -17,6 +17,22 @@ just start    # start a stopped cluster
 just status   # show active clusters and installed addons
 ```
 
+### Installing addons
+
+Addons are installed into a running cluster with `just add <addon>`. Only one GitOps provider can be active at a time — installing a second one will print an error and exit cleanly.
+
+```bash
+just add flux    # install FluxCD
+just add argocd  # install ArgoCD
+```
+
+To switch providers, recreate the cluster:
+
+```bash
+just down && just up
+just add argocd
+```
+
 ## Configurations
 
 ### Runtimes
@@ -25,7 +41,8 @@ just status   # show active clusters and installed addons
 
 ### Addons
 
-- [FluxCD](./addons/gitops/) - GitOps continuous delivery
+- [FluxCD](./addons/gitops/flux/) - GitOps continuous delivery
+- [ArgoCD](./addons/gitops/argocd/) - GitOps continuous delivery (installed via Helm)
 
 ---
 

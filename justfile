@@ -24,6 +24,7 @@ up:
 
 # Delete the sandpit cluster
 down:
+    kubectl config unset current-context 2>/dev/null || true
     kubectl config delete-context {{context}} 2>/dev/null || true
     k3d cluster delete sandpit
 
@@ -35,26 +36,33 @@ stop:
 start:
     k3d cluster start sandpit
 
-# Install FluxCD controllers
-flux-up:
-    @kubectl --context {{context}} get namespace argocd --ignore-not-found -o name 2>/dev/null | grep -q . && echo "error: argocd is already installed — remove it first with: just argocd-down" && exit 1 || true
-    kubectl --context {{context}} apply --server-side -f addons/gitops/flux/install.yaml
-
-# Remove FluxCD controllers
-flux-down:
-    kubectl --context {{context}} delete -f addons/gitops/flux/install.yaml
-
-# Install ArgoCD via Helm
-argocd-up:
-    @kubectl --context {{context}} get namespace flux-system --ignore-not-found -o name 2>/dev/null | grep -q . && echo "error: flux is already installed — remove it first with: just flux-down" && exit 1 || true
-    helm --kube-context {{context}} upgrade --install argocd argo/argo-cd \
-        --namespace argocd \
-        --create-namespace \
-        --labels "sand.pit.im/addon=argocd" \
-        --values addons/gitops/argocd/values.yaml \
-        --wait
-
-# Remove ArgoCD
-argocd-down:
-    helm --kube-context {{context}} uninstall argocd --namespace argocd
-    kubectl --context {{context}} delete namespace argocd
+# Install a gitops addon: just add <flux|argocd>
+add addon:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{addon}}" in
+        flux)
+            if kubectl --context {{context}} get namespace argocd --ignore-not-found -o name 2>/dev/null | grep -q .; then
+                echo "error: argocd is already installed — recreate the cluster first with: just down && just up"
+                exit 0
+            fi
+            kubectl --context {{context}} apply --server-side -f addons/gitops/flux/install.yaml
+            ;;
+        argocd)
+            if kubectl --context {{context}} get namespace flux-system --ignore-not-found -o name 2>/dev/null | grep -q .; then
+                echo "error: flux is already installed — recreate the cluster first with: just down && just up"
+                exit 0
+            fi
+            helm --kube-context {{context}} upgrade --install argocd argo/argo-cd \
+                --namespace argocd \
+                --create-namespace \
+                --labels "sand.pit.im/addon=argocd" \
+                --values addons/gitops/argocd/values.yaml \
+                --wait
+            ;;
+        *)
+            echo "error: unknown addon '{{addon}}'"
+            echo "available addons: flux, argocd"
+            exit 1
+            ;;
+    esac
