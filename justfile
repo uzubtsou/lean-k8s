@@ -9,6 +9,7 @@ status:
     @echo ""
     @printf "%-16s %s\n" "ADDON" "INSTALLED"
     @kubectl --context {{context}} get namespace flux-system --ignore-not-found -o name 2>/dev/null | grep -q . && printf "%-16s %s\n" "flux" "true" || printf "%-16s %s\n" "flux" "false"
+    @kubectl --context {{context}} get namespace argocd --ignore-not-found -o name 2>/dev/null | grep -q . && printf "%-16s %s\n" "argocd" "true" || printf "%-16s %s\n" "argocd" "false"
 
 # Create the sandpit cluster and set up kubeconfig
 up:
@@ -37,3 +38,17 @@ flux-up:
 # Remove FluxCD controllers
 flux-down:
     kubectl --context {{context}} delete -f addons/gitops/flux/install.yaml
+
+# Install ArgoCD via Helm
+argocd-up:
+    helm --kube-context {{context}} upgrade --install argocd argo/argo-cd \
+        --namespace argocd \
+        --create-namespace \
+        --labels "sand.pit.im/addon=argocd" \
+        --values addons/gitops/argocd/values.yaml \
+        --wait
+
+# Remove ArgoCD
+argocd-down:
+    helm --kube-context {{context}} uninstall argocd --namespace argocd
+    kubectl --context {{context}} delete namespace argocd

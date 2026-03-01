@@ -1,0 +1,4 @@
+---
+global:
+  additionalLabels:
+    sand.pit.im/addon: argocd
