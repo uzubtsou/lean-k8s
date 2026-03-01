@@ -24,7 +24,7 @@ up:
 
 # Delete the sandpit cluster
 down:
-    kubectl config unset current-context
+    kubectl config delete-context {{context}} 2>/dev/null || true
     k3d cluster delete sandpit
 
 # Stop the sandpit cluster
