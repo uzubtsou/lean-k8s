@@ -122,7 +122,7 @@ mesh provider="istio": up
             exit 1 ;;
     esac
 
-# Install gitops provider: just gitops argocd
+# Install gitops provider: just gitops argocd|flux-operator
 [script]
 gitops provider="flux": up
     addon_installed() {
@@ -182,8 +182,35 @@ gitops provider="flux": up
                 echo "  password: $PASS"
             fi
             ;;
+        flux-operator)
+            if addon_installed argocd; then
+                echo "argocd is already installed"
+                exit 0
+            fi
+            if helm --kube-context {{ context }} status flux-operator \
+                    --namespace flux-system > /dev/null 2>&1; then
+                echo "flux-operator is already installed, skipping helm install"
+            else
+                helm upgrade --install flux-operator \
+                    oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator \
+                    --kube-context {{ context }} \
+                    --namespace flux-system \
+                    --create-namespace \
+                    --wait
+                kubectl --context {{ context }} label namespace flux-system \
+                    sand.pit.im/addon=flux-operator --overwrite
+            fi
+            if kubectl --context {{ context }} get fluxinstance flux \
+                    --namespace flux-system > /dev/null 2>&1; then
+                echo "fluxinstance flux is already installed, skipping"
+            else
+                kubectl --context {{ context }} apply \
+                    --server-side \
+                    -f addons/gitops/flux-operator/instance.yaml
+            fi
+            ;;
         *)
-            echo "unknown gitops provider '{{ provider }}' — available: flux, argocd"
+            echo "unknown gitops provider '{{ provider }}' — available: flux, argocd, flux-operator"
             exit 1
             ;;
     esac
