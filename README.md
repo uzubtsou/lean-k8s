@@ -22,9 +22,12 @@ just status   # show active clusters and installed addons
 Addons are grouped by category. Each category has a default provider.
 
 ```bash
-just mesh              # install Istio (default mesh provider)
-just gitops argocd     # install ArgoCD
-just stack             # install everything: mesh + gitops
+just mesh                   # install Istio (default mesh provider)
+just auth dex               # install Dex OIDC provider
+just gitops argocd          # install ArgoCD
+just gitops flux-operator   # install Flux Operator with web UI + OIDC via Dex
+just stack                  # install everything: mesh + gitops
+just sync                   # upgrade all installed addons to latest
 ```
 
 Only one GitOps provider can be active at a time — installing a second one will print an error. To switch providers, recreate the cluster:
@@ -34,7 +37,9 @@ just down && just up
 just gitops flux
 ```
 
-When Istio is installed, `just gitops argocd` automatically detects it and configures an HTTPRoute so ArgoCD is reachable at `http://argocd.sand.pit.im`.
+When Istio is installed, gitops recipes automatically detect it and configure HTTPRoutes. For example, ArgoCD becomes reachable at `http://argocd.sand.pit.im` and the Flux Operator web UI at `http://flux.sand.pit.im`.
+
+When Dex is installed, `just gitops flux-operator` detects it and enables OIDC authentication in the Flux web UI. Install order: `just mesh` → `just auth dex` → `just gitops flux-operator`.
 
 ## Configurations
 
@@ -48,9 +53,14 @@ When Istio is installed, `just gitops argocd` automatically detects it and confi
 
 - [Istio](./addons/networking/istio/) - Service mesh with Gateway API (`just mesh istio`)
 
+**Auth**
+
+- [Dex](./addons/auth/dex/) - OIDC identity provider with static users (`just auth dex`)
+
 **GitOps**
 
 - [FluxCD](./addons/gitops/flux/) - GitOps continuous delivery (`just gitops flux`)
+- [Flux Operator](./addons/gitops/flux-operator/) - Flux Operator with web UI and OIDC (`just gitops flux-operator`)
 - [ArgoCD](./addons/gitops/argocd/) - GitOps continuous delivery via Helm (`just gitops argocd`)
 
 ---
