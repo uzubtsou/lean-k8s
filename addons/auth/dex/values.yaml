@@ -1,0 +1,40 @@
+---
+config:
+  issuer: http://dex.sand.pit.im
+
+  storage:
+    type: memory
+
+  oauth2:
+    skipApprovalScreen: true
+
+  staticClients:
+    - id: flux-web
+      name: Flux Web UI
+      secret: flux-web-secret
+      redirectURIs:
+        - http://flux.sand.pit.im/oauth2/callback
+
+  enablePasswordDB: true
+  staticPasswords:
+    - username: sandpit-user
+      email: sandpit-user@sand.pit.im
+      userID: "00000000-0000-0000-0000-000000000001"
+      hash: "$2y$10$YyFTPPCwQJgdoiSrBMRb9er4xkKDPEzHvRE84UWiXgLkHJWWtezEG"
+    - username: red-user
+      email: red-user@sand.pit.im
+      userID: "00000000-0000-0000-0000-000000000002"
+      hash: "$2y$10$/OelAYgH1HAkGgu6xb6D4.qGwK1WqyUMd..Sxd2fK2/aUMgWitcIO"
+    - username: blue-user
+      email: blue-user@sand.pit.im
+      userID: "00000000-0000-0000-0000-000000000003"
+      hash: "$2y$10$49zcvBkbgtF/QLP.XuKsC.KCluCqVRfc.lMzxdEUB8IQWGOBgUCiW"
+
+service:
+  ports:
+    http:
+      port: 80
+      targetPort: 5556
+
+ingress:
+  enabled: false

@@ -125,6 +125,52 @@ mesh provider="istio": up
             exit 1 ;;
     esac
 
+# Install auth provider: just auth dex
+[script]
+auth provider="dex": up
+    addon_installed() {
+        local ns="$1"
+        kubectl --context {{ context }} get namespace "$ns" \
+            --ignore-not-found \
+            -o name \
+            2>/dev/null | grep -q .
+    }
+
+    case "{{ provider }}" in
+        dex)
+            if ! addon_installed istio-system; then
+                echo "no mesh installed — run 'just mesh' first"
+                exit 1
+            fi
+            if addon_installed dex; then
+                echo "dex is already installed, skipping"
+            else
+                helm repo add dex https://charts.dexidp.io
+                helm repo update dex
+
+                helm --kube-context {{ context }} upgrade --install dex dex/dex \
+                    --namespace dex \
+                    --create-namespace \
+                    --values addons/auth/dex/values.yaml \
+                    --wait
+                kubectl --context {{ context }} label namespace dex \
+                    sand.pit.im/addon=dex --overwrite
+
+                kubectl --context {{ context }} apply \
+                    -f addons/auth/dex/httproute.yaml
+
+                DEX_IP=$(kubectl --context {{ context }} get svc dex \
+                    -n dex -o jsonpath='{.spec.clusterIP}')
+                sed "s/DEX_CLUSTER_IP/$DEX_IP/" addons/auth/dex/serviceentry.yaml \
+                    | kubectl --context {{ context }} apply -f -
+            fi
+            ;;
+        *)
+            echo "unknown auth provider '{{ provider }}' — available: dex"
+            exit 1
+            ;;
+    esac
+
 # Install gitops provider: just gitops argocd|flux-operator
 [script]
 gitops provider="flux": up
@@ -204,6 +250,12 @@ gitops provider="flux": up
                 kubectl --context {{ context }} label namespace flux-system \
                     sand.pit.im/addon=flux-operator --overwrite
             fi
+            if addon_installed dex; then
+                DEX_IP=$(kubectl --context {{ context }} get svc dex \
+                    -n dex -o jsonpath='{.spec.clusterIP}')
+                sed "s/DEX_CLUSTER_IP/$DEX_IP/" addons/gitops/flux-operator/host-aliases-patch.yaml \
+                    | kubectl --context {{ context }} apply -f -
+            fi
             if kubectl --context {{ context }} get fluxinstance flux \
                     --namespace flux-system > /dev/null 2>&1; then
                 echo "fluxinstance flux is already installed, skipping"
@@ -258,6 +310,24 @@ sync:
         echo "istio synced"
     fi
 
+    if addon_installed dex; then
+        echo "syncing dex..."
+        helm repo update dex
+        helm --kube-context {{ context }} upgrade --install dex dex/dex \
+            --namespace dex \
+            --values addons/auth/dex/values.yaml \
+            --wait
+        if addon_installed istio-system; then
+            kubectl --context {{ context }} apply \
+                -f addons/auth/dex/httproute.yaml
+            DEX_IP=$(kubectl --context {{ context }} get svc dex \
+                -n dex -o jsonpath='{.spec.clusterIP}')
+            sed "s/DEX_CLUSTER_IP/$DEX_IP/" addons/auth/dex/serviceentry.yaml \
+                | kubectl --context {{ context }} apply -f -
+        fi
+        echo "dex synced"
+    fi
+
     if addon_installed argocd; then
         echo "syncing argocd..."
         helm repo update argo
@@ -282,6 +352,12 @@ sync:
                 --namespace flux-system \
                 --values addons/gitops/flux-operator/values.yaml \
                 --wait
+            if addon_installed dex; then
+                DEX_IP=$(kubectl --context {{ context }} get svc dex \
+                    -n dex -o jsonpath='{.spec.clusterIP}')
+                sed "s/DEX_CLUSTER_IP/$DEX_IP/" addons/gitops/flux-operator/host-aliases-patch.yaml \
+                    | kubectl --context {{ context }} apply -f -
+            fi
             kubectl --context {{ context }} apply \
                 --server-side \
                 -f addons/gitops/flux-operator/instance.yaml

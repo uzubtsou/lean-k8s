@@ -1,7 +1,11 @@
 ---
 web:
   config:
+    baseURL: http://flux.sand.pit.im
     authentication:
-      type: Anonymous
-      anonymous:
-        username: sandpit-user
+      type: OAuth2
+      oauth2:
+        provider: OIDC
+        clientID: flux-web
+        clientSecret: flux-web-secret
+        issuerURL: http://dex.sand.pit.im

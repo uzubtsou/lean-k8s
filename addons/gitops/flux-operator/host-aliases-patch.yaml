@@ -1,0 +1,13 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flux-operator
+  namespace: flux-system
+spec:
+  template:
+    spec:
+      hostAliases:
+        - ip: DEX_CLUSTER_IP
+          hostnames:
+            - dex.sand.pit.im

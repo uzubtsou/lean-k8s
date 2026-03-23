@@ -1,0 +1,18 @@
+---
+apiVersion: networking.istio.io/v1
+kind: ServiceEntry
+metadata:
+  name: dex-internal
+  namespace: flux-system
+  labels:
+    sand.pit.im/addon: dex
+spec:
+  hosts:
+    - dex.sand.pit.im
+  ports:
+    - number: 80
+      name: http
+      protocol: HTTP
+  resolution: STATIC
+  endpoints:
+    - address: DEX_CLUSTER_IP
