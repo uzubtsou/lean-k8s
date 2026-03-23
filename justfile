@@ -41,6 +41,7 @@ up:
         k3d kubeconfig merge sandpit --kubeconfig-merge-default
         kubectl config rename-context k3d-sandpit {{ context }}
         kubectl config use-context {{ context }}
+        kubectl apply --context {{ context }} -f runtimes/k3d/tenants.yaml
     fi
 
 # Delete the sandpit cluster
@@ -94,6 +95,7 @@ mesh provider="istio": up
                 --install istio-base istio/base \
                 --namespace istio-system \
                 --create-namespace \
+                --force-conflicts \
                 --wait
 
             # install istiod
@@ -101,6 +103,7 @@ mesh provider="istio": up
                 --kube-context {{ context }} \
                 --install istiod istio/istiod \
                 --namespace istio-system \
+                --force-conflicts \
                 --wait
 
             # create a namespace for istio-ingress
@@ -196,6 +199,7 @@ gitops provider="flux": up
                     --kube-context {{ context }} \
                     --namespace flux-system \
                     --create-namespace \
+                    --values addons/gitops/flux-operator/values.yaml \
                     --wait
                 kubectl --context {{ context }} label namespace flux-system \
                     sand.pit.im/addon=flux-operator --overwrite
@@ -208,12 +212,95 @@ gitops provider="flux": up
                     --server-side \
                     -f addons/gitops/flux-operator/instance.yaml
             fi
+            kubectl --context {{ context }} apply \
+                -f addons/gitops/flux-operator/rbac.yaml \
+                -f addons/tenants/flux-operator.yaml
+            if addon_installed istio-system; then
+                echo "istio detected, enabling HTTPRoute for flux-operator"
+                kubectl --context {{ context }} apply \
+                    -f addons/gitops/flux-operator/httproute.yaml
+            fi
             ;;
         *)
             echo "unknown gitops provider '{{ provider }}' — available: flux, argocd, flux-operator"
             exit 1
             ;;
     esac
+
+# Sync (upgrade) all installed addons to their latest versions
+[script]
+sync:
+    addon_installed() {
+        local ns="$1"
+        kubectl --context {{ context }} get namespace "$ns" \
+            --ignore-not-found \
+            -o name \
+            2>/dev/null | grep -q .
+    }
+
+    if addon_installed istio-system; then
+        echo "syncing istio..."
+        helm repo update istio
+        helm upgrade \
+            --kube-context {{ context }} \
+            --install istio-base istio/base \
+            --namespace istio-system \
+            --force-conflicts \
+            --wait
+        helm upgrade \
+            --kube-context {{ context }} \
+            --install istiod istio/istiod \
+            --namespace istio-system \
+            --force-conflicts \
+            --wait
+        kubectl apply -f addons/networking/istio/gateway.yaml \
+            --context {{ context }}
+        echo "istio synced"
+    fi
+
+    if addon_installed argocd; then
+        echo "syncing argocd..."
+        helm repo update argo
+        VALUES="--values addons/gitops/argocd/values.yaml"
+        if addon_installed istio-system; then
+            VALUES="$VALUES --values addons/gitops/argocd/values-mesh.yaml"
+        fi
+        helm --kube-context {{ context }} upgrade --install argocd argo/argo-cd \
+            --namespace argocd \
+            $VALUES \
+            --wait
+        echo "argocd synced"
+    fi
+
+    if addon_installed flux-system; then
+        if helm --kube-context {{ context }} status flux-operator \
+                --namespace flux-system > /dev/null 2>&1; then
+            echo "syncing flux-operator..."
+            helm upgrade --install flux-operator \
+                oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator \
+                --kube-context {{ context }} \
+                --namespace flux-system \
+                --values addons/gitops/flux-operator/values.yaml \
+                --wait
+            kubectl --context {{ context }} apply \
+                --server-side \
+                -f addons/gitops/flux-operator/instance.yaml
+            kubectl --context {{ context }} apply \
+                -f addons/gitops/flux-operator/rbac.yaml \
+                -f addons/tenants/flux-operator.yaml
+            if addon_installed istio-system; then
+                kubectl --context {{ context }} apply \
+                    -f addons/gitops/flux-operator/httproute.yaml
+            fi
+            echo "flux-operator synced"
+        else
+            echo "syncing flux..."
+            kubectl --context {{ context }} apply \
+                --server-side \
+                -f addons/gitops/flux/install.yaml
+            echo "flux synced"
+        fi
+    fi
 
 # Install full stack: mesh + gitops
 stack: (mesh "istio") (gitops "argocd")

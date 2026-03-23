@@ -1,0 +1,16 @@
+---
+# sandpit-user: full cluster-wide admin access
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: flux-web-sandpit-user
+  labels:
+    sand.pit.im/addon: flux-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: flux-web-admin
+subjects:
+  - kind: User
+    name: sandpit-user
+    apiGroup: rbac.authorization.k8s.io

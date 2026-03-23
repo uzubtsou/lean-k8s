@@ -1,0 +1,25 @@
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: flux-operator
+  namespace: flux-system
+  labels:
+    sand.pit.im/addon: flux-operator
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: sandpit
+      namespace: istio-ingress
+  hostnames:
+    - flux.sand.pit.im
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: flux-operator
+          namespace: flux-system
+          port: 9080
