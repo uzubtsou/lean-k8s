@@ -90,7 +90,7 @@ mesh provider="istio": up
 
             # install istio base
             helm upgrade \
-                --kube-context {{ context }}
+                --kube-context {{ context }} \
                 --install istio-base istio/base \
                 --namespace istio-system \
                 --create-namespace \
