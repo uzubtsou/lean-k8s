@@ -12,5 +12,5 @@ roleRef:
   name: flux-web-admin
 subjects:
   - kind: User
-    name: sandpit-user@sand.pit.im
+    name: sandpit-user
     apiGroup: rbac.authorization.k8s.io

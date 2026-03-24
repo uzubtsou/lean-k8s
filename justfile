@@ -250,12 +250,6 @@ gitops provider="flux": up
                 kubectl --context {{ context }} label namespace flux-system \
                     sand.pit.im/addon=flux-operator --overwrite
             fi
-            if addon_installed dex; then
-                DEX_IP=$(kubectl --context {{ context }} get svc dex \
-                    -n dex -o jsonpath='{.spec.clusterIP}')
-                sed "s/DEX_CLUSTER_IP/$DEX_IP/" addons/gitops/flux-operator/host-aliases-patch.yaml \
-                    | kubectl --context {{ context }} apply -f -
-            fi
             if kubectl --context {{ context }} get fluxinstance flux \
                     --namespace flux-system > /dev/null 2>&1; then
                 echo "fluxinstance flux is already installed, skipping"
@@ -352,12 +346,6 @@ sync:
                 --namespace flux-system \
                 --values addons/gitops/flux-operator/values.yaml \
                 --wait
-            if addon_installed dex; then
-                DEX_IP=$(kubectl --context {{ context }} get svc dex \
-                    -n dex -o jsonpath='{.spec.clusterIP}')
-                sed "s/DEX_CLUSTER_IP/$DEX_IP/" addons/gitops/flux-operator/host-aliases-patch.yaml \
-                    | kubectl --context {{ context }} apply -f -
-            fi
             kubectl --context {{ context }} apply \
                 --server-side \
                 -f addons/gitops/flux-operator/instance.yaml

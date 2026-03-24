@@ -13,7 +13,7 @@ roleRef:
   name: flux-web-admin
 subjects:
   - kind: User
-    name: red-user@sand.pit.im
+    name: red-user
     apiGroup: rbac.authorization.k8s.io
 ---
 # blue-user: admin access scoped to the blue namespace
@@ -30,5 +30,5 @@ roleRef:
   name: flux-web-admin
 subjects:
   - kind: User
-    name: blue-user@sand.pit.im
+    name: blue-user
     apiGroup: rbac.authorization.k8s.io
