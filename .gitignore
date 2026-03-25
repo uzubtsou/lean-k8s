@@ -40,3 +40,10 @@ override.tf.json
 terraform.rc
 /.claude
 /.specify
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+/specs/001-justfile-python-cli
