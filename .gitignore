@@ -46,4 +46,4 @@ __pycache__/
 *.pyc
 .venv/
 venv/
-/specs/001-justfile-python-cli
+/specs
