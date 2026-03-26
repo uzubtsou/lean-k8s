@@ -11,12 +11,14 @@ management logic lives here.
 
 To add a new command:
   1. Add a @cli.command() function below.
-  2. Optionally wire it in justfile: `just <name>:  @python3 sandpit.py <name>`
+  2. Optionally wire it in justfile: `just <name>:  @uv run sandpit.py <name>`
   No other changes are needed.
 """
 
+import abc
 import base64
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -73,35 +75,210 @@ def die(msg):
     sys.exit(1)
 
 
+def _check_runtime_binary(runtime_name):
+    """Verify the runtime binary is on PATH; die with an install hint if not."""
+    if shutil.which(runtime_name) is None:
+        die(
+            f"runtime '{runtime_name}' not found on PATH"
+            f" — install it first (e.g. brew install {runtime_name})"
+        )
+
+
+def _detect_runtime() -> str | None:
+    """Return the name of the runtime that currently has the sandpit cluster running."""
+    for name, cls in RUNTIMES.items():
+        if shutil.which(name) is None:
+            continue
+        try:
+            if cls().exists():
+                return name
+        except Exception:
+            continue
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Runtime abstraction
+# ---------------------------------------------------------------------------
+
+
+class Runtime(abc.ABC):
+    """Abstract base class for a local Kubernetes cluster runtime."""
+
+    name: str
+
+    @abc.abstractmethod
+    def create(self, context: str):
+        """Create the cluster and configure kubeconfig."""
+
+    @abc.abstractmethod
+    def delete(self, context: str):
+        """Delete the cluster and clean up kubeconfig."""
+
+    @abc.abstractmethod
+    def list(self):
+        """Print a summary of running clusters (used by status)."""
+
+    @abc.abstractmethod
+    def exists(self) -> bool:
+        """Return True if the sandpit cluster is already running."""
+
+    def stop(self):
+        """Pause the cluster (not supported by all runtimes)."""
+        die(
+            f"stop is not supported for {self.name}"
+            " — use 'just down' / 'just up' to recreate the cluster"
+        )
+
+    def start(self):
+        """Resume a paused cluster (not supported by all runtimes)."""
+        die(
+            f"start is not supported for {self.name}"
+            " — use 'just down' / 'just up' to recreate the cluster"
+        )
+
+
+RUNTIMES: dict[str, type[Runtime]] = {}
+
+
+# ---------------------------------------------------------------------------
+# K3dRuntime
+# ---------------------------------------------------------------------------
+
+
+class K3dRuntime(Runtime):
+    """Runtime implementation backed by k3d (k3s in Docker)."""
+
+    name = "k3d"
+
+    def exists(self) -> bool:
+        return (
+            subprocess.run(
+                ["k3d", "cluster", "get", "sandpit"], capture_output=True
+            ).returncode
+            == 0
+        )
+
+    def create(self, context: str):
+        if self.exists():
+            click.echo("cluster sandpit already exists, skipping")
+            return
+        run(["k3d", "cluster", "create", "--config", _path("runtimes/k3d/config.yaml")])
+        run(["k3d", "kubeconfig", "merge", "sandpit", "--kubeconfig-merge-default"])
+        run(["kubectl", "config", "rename-context", "k3d-sandpit", context])
+        run(["kubectl", "config", "use-context", context])
+        run(
+            [
+                "kubectl",
+                "apply",
+                "--context",
+                context,
+                "-f",
+                _path("runtimes/k3d/tenants.yaml"),
+            ]
+        )
+
+    def delete(self, context: str):
+        subprocess.run(
+            ["kubectl", "config", "unset", "current-context"], capture_output=True
+        )
+        subprocess.run(
+            ["kubectl", "config", "delete-context", context], capture_output=True
+        )
+        run(["k3d", "cluster", "delete", "sandpit"])
+
+    def stop(self):
+        run(["k3d", "cluster", "stop", "sandpit"])
+
+    def start(self):
+        run(["k3d", "cluster", "start", "sandpit"])
+
+    def list(self):
+        run(["k3d", "cluster", "list"], check=False)
+
+
+# ---------------------------------------------------------------------------
+# KindRuntime
+# ---------------------------------------------------------------------------
+
+
+class KindRuntime(Runtime):
+    """Runtime implementation backed by kind (Kubernetes IN Docker)."""
+
+    name = "kind"
+
+    def exists(self) -> bool:
+        output = capture(["kind", "get", "clusters"])
+        return "sandpit" in output.splitlines()
+
+    def create(self, context: str):
+        if self.exists():
+            click.echo("cluster sandpit already exists, skipping")
+            return
+        run(
+            [
+                "kind",
+                "create",
+                "cluster",
+                "--name",
+                "sandpit",
+                "--config",
+                _path("runtimes/kind/config.yaml"),
+            ]
+        )
+        run(["kind", "export", "kubeconfig", "--name", "sandpit"])
+        run(["kubectl", "config", "rename-context", "kind-sandpit", context])
+        run(["kubectl", "config", "use-context", context])
+        run(
+            [
+                "kubectl",
+                "apply",
+                "--context",
+                context,
+                "-f",
+                _path("runtimes/kind/tenants.yaml"),
+            ]
+        )
+
+    def delete(self, context: str):
+        subprocess.run(
+            ["kubectl", "config", "unset", "current-context"], capture_output=True
+        )
+        subprocess.run(
+            ["kubectl", "config", "delete-context", context], capture_output=True
+        )
+        run(["kind", "delete", "cluster", "--name", "sandpit"])
+
+    def list(self):
+        run(["kind", "get", "clusters"], check=False)
+
+
+RUNTIMES = {"k3d": K3dRuntime, "kind": KindRuntime}
+
+
 # ---------------------------------------------------------------------------
 # Shared implementation functions
 # Called by Click commands and by each other (e.g. mesh calls _do_up).
 # ---------------------------------------------------------------------------
 
 
-def _do_up(context):
-    result = subprocess.run(["k3d", "cluster", "get", "sandpit"], capture_output=True)
-    if result.returncode == 0:
-        click.echo("cluster sandpit already exists, skipping")
-        return
-    run(["k3d", "cluster", "create", "--config", _path("runtimes/k3d/config.yaml")])
-    run(["k3d", "kubeconfig", "merge", "sandpit", "--kubeconfig-merge-default"])
-    run(["kubectl", "config", "rename-context", "k3d-sandpit", context])
-    run(["kubectl", "config", "use-context", context])
-    run(
-        [
-            "kubectl",
-            "apply",
-            "--context",
-            context,
-            "-f",
-            _path("runtimes/k3d/tenants.yaml"),
-        ]
-    )
+def _do_up(context, runtime):
+    for name, cls in RUNTIMES.items():
+        if name == runtime.name or shutil.which(name) is None:
+            continue
+        try:
+            if cls().exists():
+                die(
+                    f"a sandpit cluster is already running under '{name}'"
+                    f" — run 'just down' to delete it before switching runtimes"
+                )
+        except Exception:
+            continue
+    runtime.create(context)
 
 
-def _do_mesh(context, provider):
-    _do_up(context)
+def _do_mesh(context, provider, runtime):
+    _do_up(context, runtime)
 
     if provider == "istio":
         if addon_installed("istio-system", context):
@@ -225,8 +402,8 @@ def _do_mesh(context, provider):
         die(f"unknown mesh provider '{provider}' — available: istio")
 
 
-def _do_auth(context, provider):
-    _do_up(context)
+def _do_auth(context, provider, runtime):
+    _do_up(context, runtime)
 
     if provider == "dex":
         if not addon_installed("istio-system", context):
@@ -304,8 +481,8 @@ def _do_auth(context, provider):
         die(f"unknown auth provider '{provider}' — available: dex")
 
 
-def _do_gitops(context, provider):
-    _do_up(context)
+def _do_gitops(context, provider, runtime):
+    _do_up(context, runtime)
 
     if provider == "flux":
         if addon_installed("argocd", context):
@@ -517,10 +694,22 @@ def _do_gitops(context, provider):
     show_default="sandpit",
     help="kubectl context to use for all operations.",
 )
+@click.option(
+    "--runtime",
+    default="",
+    show_default="auto-detect",
+    help="Cluster runtime. Omit to auto-detect from running cluster (falls back to k3d).",
+)
 @click.pass_context
-def cli(ctx, context):
+def cli(ctx, context, runtime):
     ctx.ensure_object(dict)
     ctx.obj["context"] = context
+    if not runtime:
+        runtime = os.environ.get("SANDPIT_RUNTIME") or _detect_runtime() or "k3d"
+    if runtime not in RUNTIMES:
+        die(f"unknown runtime '{runtime}' — available: {', '.join(RUNTIMES)}")
+    _check_runtime_binary(runtime)
+    ctx.obj["runtime"] = RUNTIMES[runtime]()
 
 
 # ---------------------------------------------------------------------------
@@ -534,7 +723,7 @@ def status(ctx):
     """Show cluster state and installed addons."""
     context = ctx.obj["context"]
 
-    run(["k3d", "cluster", "list"], check=False)
+    ctx.obj["runtime"].list()
     click.echo("")
 
     result = subprocess.run(
@@ -571,35 +760,28 @@ def status(ctx):
 @click.pass_context
 def up(ctx):
     """Create the sandpit cluster and set up kubeconfig (idempotent)."""
-    _do_up(ctx.obj["context"])
+    _do_up(ctx.obj["context"], ctx.obj["runtime"])
 
 
 @cli.command()
 @click.pass_context
 def down(ctx):
     """Delete the sandpit cluster."""
-    context = ctx.obj["context"]
-    subprocess.run(
-        ["kubectl", "config", "unset", "current-context"],
-        capture_output=True,
-    )
-    subprocess.run(
-        ["kubectl", "config", "delete-context", context],
-        capture_output=True,
-    )
-    run(["k3d", "cluster", "delete", "sandpit"])
+    ctx.obj["runtime"].delete(ctx.obj["context"])
 
 
 @cli.command()
-def stop():
+@click.pass_context
+def stop(ctx):
     """Stop the sandpit cluster."""
-    run(["k3d", "cluster", "stop", "sandpit"])
+    ctx.obj["runtime"].stop()
 
 
 @cli.command()
-def start():
+@click.pass_context
+def start(ctx):
     """Start a stopped sandpit cluster."""
-    run(["k3d", "cluster", "start", "sandpit"])
+    ctx.obj["runtime"].start()
 
 
 # ---------------------------------------------------------------------------
@@ -612,7 +794,7 @@ def start():
 @click.pass_context
 def mesh(ctx, provider):
     """Install service mesh (default: istio). Implies up."""
-    _do_mesh(ctx.obj["context"], provider)
+    _do_mesh(ctx.obj["context"], provider, ctx.obj["runtime"])
 
 
 @cli.command()
@@ -620,7 +802,7 @@ def mesh(ctx, provider):
 @click.pass_context
 def auth(ctx, provider):
     """Install auth provider (default: dex). Requires mesh."""
-    _do_auth(ctx.obj["context"], provider)
+    _do_auth(ctx.obj["context"], provider, ctx.obj["runtime"])
 
 
 @cli.command()
@@ -628,7 +810,7 @@ def auth(ctx, provider):
 @click.pass_context
 def gitops(ctx, provider):
     """Install GitOps provider (default: flux). Mutually exclusive."""
-    _do_gitops(ctx.obj["context"], provider)
+    _do_gitops(ctx.obj["context"], provider, ctx.obj["runtime"])
 
 
 @cli.command()
@@ -850,8 +1032,8 @@ def sync(ctx):
 def stack(ctx):
     """Install full stack: mesh (istio) + gitops (argocd). Implies up."""
     context = ctx.obj["context"]
-    _do_mesh(context, "istio")
-    _do_gitops(context, "argocd")
+    _do_mesh(context, "istio", ctx.obj["runtime"])
+    _do_gitops(context, "argocd", ctx.obj["runtime"])
 
 
 # ---------------------------------------------------------------------------
