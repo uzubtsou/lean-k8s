@@ -277,6 +277,296 @@ def _do_up(context, runtime):
     runtime.create(context)
 
 
+# ---------------------------------------------------------------------------
+# Provider install functions
+# Called by _do_* wrappers and sync command.
+# Each function encapsulates only the install/upgrade steps — no precondition
+# checks, no cluster-up guard, no mutual-exclusivity checks.
+# ---------------------------------------------------------------------------
+
+
+def _install_istio(context, runtime):
+    """Install or upgrade Istio service mesh."""
+    run(
+        [
+            "helm",
+            "repo",
+            "add",
+            "istio",
+            "https://istio-release.storage.googleapis.com/charts",
+        ]
+    )
+    run(["helm", "repo", "update", "istio"])
+    run(
+        [
+            "helm",
+            "upgrade",
+            "--kube-context",
+            context,
+            "--install",
+            "istio-base",
+            "istio/base",
+            "--namespace",
+            "istio-system",
+            "--create-namespace",
+            "--force-conflicts",
+            "--wait",
+        ]
+    )
+    run(
+        [
+            "helm",
+            "upgrade",
+            "--kube-context",
+            context,
+            "--install",
+            "istiod",
+            "istio/istiod",
+            "--namespace",
+            "istio-system",
+            "--force-conflicts",
+            "--wait",
+        ]
+    )
+    # Create istio-ingress namespace (idempotent via dry-run + apply)
+    ns_yaml = capture(
+        [
+            "kubectl",
+            "create",
+            "namespace",
+            "istio-ingress",
+            "--context",
+            context,
+            "--dry-run=client",
+            "-o",
+            "yaml",
+        ]
+    )
+    proc = subprocess.run(
+        ["kubectl", "--context", context, "apply", "-f", "-"],
+        input=ns_yaml,
+        text=True,
+    )
+    if proc.returncode != 0:
+        sys.exit(proc.returncode)
+    run(
+        [
+            "kubectl",
+            "label",
+            "namespace",
+            "istio-ingress",
+            "sand.pit.im/addon=istio",
+            "--context",
+            context,
+            "--overwrite",
+        ]
+    )
+    run(
+        [
+            "kubectl",
+            "apply",
+            "-f",
+            _path("addons/networking/istio/gateway.yaml"),
+            "--context",
+            context,
+        ]
+    )
+
+
+def _install_dex(context, runtime):
+    """Install or upgrade Dex OIDC provider."""
+    run(["helm", "repo", "add", "dex", "https://charts.dexidp.io"])
+    run(["helm", "repo", "update", "dex"])
+    run(
+        [
+            "helm",
+            "--kube-context",
+            context,
+            "upgrade",
+            "--install",
+            "dex",
+            "dex/dex",
+            "--namespace",
+            "dex",
+            "--create-namespace",
+            "--values",
+            _path("addons/auth/dex/values.yaml"),
+            "--wait",
+        ]
+    )
+    run(
+        [
+            "kubectl",
+            "--context",
+            context,
+            "label",
+            "namespace",
+            "dex",
+            "sand.pit.im/addon=dex",
+            "--overwrite",
+        ]
+    )
+    if addon_installed("istio-system", context):
+        run(
+            [
+                "kubectl",
+                "--context",
+                context,
+                "apply",
+                "-f",
+                _path("addons/auth/dex/httproute.yaml"),
+            ]
+        )
+        if addon_installed("flux-system", context):
+            dex_ip = capture(
+                [
+                    "kubectl",
+                    "--context",
+                    context,
+                    "get",
+                    "svc",
+                    "dex",
+                    "-n",
+                    "dex",
+                    "-o",
+                    "jsonpath={.spec.clusterIP}",
+                ]
+            )
+            with open(_path("addons/auth/dex/serviceentry.yaml")) as f:
+                serviceentry = f.read().replace("DEX_CLUSTER_IP", dex_ip)
+            proc = subprocess.run(
+                ["kubectl", "--context", context, "apply", "-f", "-"],
+                input=serviceentry,
+                text=True,
+            )
+            if proc.returncode != 0:
+                sys.exit(proc.returncode)
+
+
+def _install_argocd(context, runtime):
+    """Install or upgrade ArgoCD."""
+    run(["helm", "repo", "add", "argo", "https://argoproj.github.io/argo-helm"])
+    run(["helm", "repo", "update", "argo"])
+    values_args = ["--values", _path("addons/gitops/argocd/values.yaml")]
+    if addon_installed("istio-system", context):
+        click.echo("istio detected, enabling HTTPRoute for argocd")
+        values_args += [
+            "--values",
+            _path("addons/gitops/argocd/values-mesh.yaml"),
+        ]
+    run(
+        [
+            "helm",
+            "--kube-context",
+            context,
+            "upgrade",
+            "--install",
+            "argocd",
+            "argo/argo-cd",
+            "--namespace",
+            "argocd",
+            "--create-namespace",
+        ]
+        + values_args
+        + ["--wait"]
+    )
+    run(
+        [
+            "kubectl",
+            "--context",
+            context,
+            "label",
+            "namespace",
+            "argocd",
+            "sand.pit.im/addon=argocd",
+            "--overwrite",
+        ]
+    )
+
+
+def _install_flux(context):
+    """Install or upgrade Flux."""
+    run(
+        [
+            "kubectl",
+            "--context",
+            context,
+            "apply",
+            "--server-side",
+            "-f",
+            _path("addons/gitops/flux/install.yaml"),
+        ]
+    )
+
+
+def _install_flux_operator(context, runtime):
+    """Install or upgrade Flux Operator."""
+    run(
+        [
+            "helm",
+            "upgrade",
+            "--install",
+            "flux-operator",
+            "oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator",
+            "--kube-context",
+            context,
+            "--namespace",
+            "flux-system",
+            "--create-namespace",
+            "--values",
+            _path("addons/gitops/flux-operator/values.yaml"),
+            "--wait",
+        ]
+    )
+    run(
+        [
+            "kubectl",
+            "--context",
+            context,
+            "label",
+            "namespace",
+            "flux-system",
+            "sand.pit.im/addon=flux-operator",
+            "--overwrite",
+        ]
+    )
+    run(
+        [
+            "kubectl",
+            "--context",
+            context,
+            "apply",
+            "--server-side",
+            "-f",
+            _path("addons/gitops/flux-operator/instance.yaml"),
+        ]
+    )
+    run(
+        [
+            "kubectl",
+            "--context",
+            context,
+            "apply",
+            "-f",
+            _path("addons/gitops/flux-operator/rbac.yaml"),
+            "-f",
+            _path("addons/tenants/flux-operator.yaml"),
+        ]
+    )
+    if addon_installed("istio-system", context):
+        click.echo("istio detected, enabling HTTPRoute for flux-operator")
+        run(
+            [
+                "kubectl",
+                "--context",
+                context,
+                "apply",
+                "-f",
+                _path("addons/gitops/flux-operator/httproute.yaml"),
+            ]
+        )
+
+
 def _do_mesh(context, provider, runtime):
     _do_up(context, runtime)
 
@@ -310,94 +600,7 @@ def _do_mesh(context, provider, runtime):
                 ]
             )
 
-        run(
-            [
-                "helm",
-                "repo",
-                "add",
-                "istio",
-                "https://istio-release.storage.googleapis.com/charts",
-            ]
-        )
-        run(["helm", "repo", "update", "istio"])
-
-        run(
-            [
-                "helm",
-                "upgrade",
-                "--kube-context",
-                context,
-                "--install",
-                "istio-base",
-                "istio/base",
-                "--namespace",
-                "istio-system",
-                "--create-namespace",
-                "--force-conflicts",
-                "--wait",
-            ]
-        )
-
-        run(
-            [
-                "helm",
-                "upgrade",
-                "--kube-context",
-                context,
-                "--install",
-                "istiod",
-                "istio/istiod",
-                "--namespace",
-                "istio-system",
-                "--force-conflicts",
-                "--wait",
-            ]
-        )
-
-        # Create istio-ingress namespace (idempotent via dry-run + apply)
-        ns_yaml = capture(
-            [
-                "kubectl",
-                "create",
-                "namespace",
-                "istio-ingress",
-                "--context",
-                context,
-                "--dry-run=client",
-                "-o",
-                "yaml",
-            ]
-        )
-        proc = subprocess.run(
-            ["kubectl", "--context", context, "apply", "-f", "-"],
-            input=ns_yaml,
-            text=True,
-        )
-        if proc.returncode != 0:
-            sys.exit(proc.returncode)
-
-        run(
-            [
-                "kubectl",
-                "label",
-                "namespace",
-                "istio-ingress",
-                "sand.pit.im/addon=istio",
-                "--context",
-                context,
-                "--overwrite",
-            ]
-        )
-        run(
-            [
-                "kubectl",
-                "apply",
-                "-f",
-                _path("addons/networking/istio/gateway.yaml"),
-                "--context",
-                context,
-            ]
-        )
+        _install_istio(context, runtime)
     else:
         die(f"unknown mesh provider '{provider}' — available: istio")
 
@@ -412,71 +615,7 @@ def _do_auth(context, provider, runtime):
             click.echo("dex is already installed, skipping")
             return
 
-        run(["helm", "repo", "add", "dex", "https://charts.dexidp.io"])
-        run(["helm", "repo", "update", "dex"])
-        run(
-            [
-                "helm",
-                "--kube-context",
-                context,
-                "upgrade",
-                "--install",
-                "dex",
-                "dex/dex",
-                "--namespace",
-                "dex",
-                "--create-namespace",
-                "--values",
-                _path("addons/auth/dex/values.yaml"),
-                "--wait",
-            ]
-        )
-        run(
-            [
-                "kubectl",
-                "--context",
-                context,
-                "label",
-                "namespace",
-                "dex",
-                "sand.pit.im/addon=dex",
-                "--overwrite",
-            ]
-        )
-        run(
-            [
-                "kubectl",
-                "--context",
-                context,
-                "apply",
-                "-f",
-                _path("addons/auth/dex/httproute.yaml"),
-            ]
-        )
-
-        dex_ip = capture(
-            [
-                "kubectl",
-                "--context",
-                context,
-                "get",
-                "svc",
-                "dex",
-                "-n",
-                "dex",
-                "-o",
-                "jsonpath={.spec.clusterIP}",
-            ]
-        )
-        with open(_path("addons/auth/dex/serviceentry.yaml")) as f:
-            serviceentry = f.read().replace("DEX_CLUSTER_IP", dex_ip)
-        proc = subprocess.run(
-            ["kubectl", "--context", context, "apply", "-f", "-"],
-            input=serviceentry,
-            text=True,
-        )
-        if proc.returncode != 0:
-            sys.exit(proc.returncode)
+        _install_dex(context, runtime)
     else:
         die(f"unknown auth provider '{provider}' — available: dex")
 
@@ -491,17 +630,7 @@ def _do_gitops(context, provider, runtime):
         if addon_installed("flux-system", context):
             click.echo("flux is already installed, skipping")
             return
-        run(
-            [
-                "kubectl",
-                "--context",
-                context,
-                "apply",
-                "--server-side",
-                "-f",
-                _path("addons/gitops/flux/install.yaml"),
-            ]
-        )
+        _install_flux(context)
 
     elif provider == "argocd":
         if addon_installed("flux-system", context):
@@ -511,45 +640,7 @@ def _do_gitops(context, provider, runtime):
             click.echo("argocd is already installed, skipping")
             return
 
-        run(["helm", "repo", "add", "argo", "https://argoproj.github.io/argo-helm"])
-        run(["helm", "repo", "update", "argo"])
-
-        values_args = ["--values", _path("addons/gitops/argocd/values.yaml")]
-        if addon_installed("istio-system", context):
-            click.echo("istio detected, enabling HTTPRoute for argocd")
-            values_args += [
-                "--values",
-                _path("addons/gitops/argocd/values-mesh.yaml"),
-            ]
-
-        run(
-            [
-                "helm",
-                "--kube-context",
-                context,
-                "upgrade",
-                "--install",
-                "argocd",
-                "argo/argo-cd",
-                "--namespace",
-                "argocd",
-                "--create-namespace",
-            ]
-            + values_args
-            + ["--wait"]
-        )
-        run(
-            [
-                "kubectl",
-                "--context",
-                context,
-                "label",
-                "namespace",
-                "argocd",
-                "sand.pit.im/addon=argocd",
-                "--overwrite",
-            ]
-        )
+        _install_argocd(context, runtime)
 
         password_b64 = capture(
             [
@@ -576,105 +667,7 @@ def _do_gitops(context, provider, runtime):
         if addon_installed("argocd", context):
             click.echo("argocd is already installed")
             sys.exit(0)
-
-        helm_check = subprocess.run(
-            [
-                "helm",
-                "--kube-context",
-                context,
-                "status",
-                "flux-operator",
-                "--namespace",
-                "flux-system",
-            ],
-            capture_output=True,
-        )
-        if helm_check.returncode != 0:
-            run(
-                [
-                    "helm",
-                    "upgrade",
-                    "--install",
-                    "flux-operator",
-                    "oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator",
-                    "--kube-context",
-                    context,
-                    "--namespace",
-                    "flux-system",
-                    "--create-namespace",
-                    "--values",
-                    _path("addons/gitops/flux-operator/values.yaml"),
-                    "--wait",
-                ]
-            )
-            run(
-                [
-                    "kubectl",
-                    "--context",
-                    context,
-                    "label",
-                    "namespace",
-                    "flux-system",
-                    "sand.pit.im/addon=flux-operator",
-                    "--overwrite",
-                ]
-            )
-        else:
-            click.echo("flux-operator is already installed, skipping helm install")
-
-        fi_check = subprocess.run(
-            [
-                "kubectl",
-                "--context",
-                context,
-                "get",
-                "fluxinstance",
-                "flux",
-                "--namespace",
-                "flux-system",
-            ],
-            capture_output=True,
-        )
-        if fi_check.returncode != 0:
-            run(
-                [
-                    "kubectl",
-                    "--context",
-                    context,
-                    "apply",
-                    "--server-side",
-                    "-f",
-                    _path("addons/gitops/flux-operator/instance.yaml"),
-                ]
-            )
-        else:
-            click.echo("fluxinstance flux is already installed, skipping")
-
-        run(
-            [
-                "kubectl",
-                "--context",
-                context,
-                "apply",
-                "-f",
-                _path("addons/gitops/flux-operator/rbac.yaml"),
-                "-f",
-                _path("addons/tenants/flux-operator.yaml"),
-            ]
-        )
-
-        if addon_installed("istio-system", context):
-            click.echo("istio detected, enabling HTTPRoute for flux-operator")
-            run(
-                [
-                    "kubectl",
-                    "--context",
-                    context,
-                    "apply",
-                    "-f",
-                    _path("addons/gitops/flux-operator/httproute.yaml"),
-                ]
-            )
+        _install_flux_operator(context, runtime)
     else:
         die(
             f"unknown gitops provider '{provider}'"
@@ -818,134 +811,27 @@ def gitops(ctx, provider):
 def sync(ctx):
     """Upgrade all installed addons to their latest versions."""
     context = ctx.obj["context"]
+    runtime = ctx.obj["runtime"]
+    synced = False
 
     if addon_installed("istio-system", context):
         click.echo("syncing istio...")
-        run(["helm", "repo", "update", "istio"])
-        run(
-            [
-                "helm",
-                "upgrade",
-                "--kube-context",
-                context,
-                "--install",
-                "istio-base",
-                "istio/base",
-                "--namespace",
-                "istio-system",
-                "--force-conflicts",
-                "--wait",
-            ]
-        )
-        run(
-            [
-                "helm",
-                "upgrade",
-                "--kube-context",
-                context,
-                "--install",
-                "istiod",
-                "istio/istiod",
-                "--namespace",
-                "istio-system",
-                "--force-conflicts",
-                "--wait",
-            ]
-        )
-        run(
-            [
-                "kubectl",
-                "apply",
-                "-f",
-                _path("addons/networking/istio/gateway.yaml"),
-                "--context",
-                context,
-            ]
-        )
+        _install_istio(context, runtime)
         click.echo("istio synced")
+        synced = True
 
     if addon_installed("dex", context):
         click.echo("syncing dex...")
-        run(["helm", "repo", "update", "dex"])
-        run(
-            [
-                "helm",
-                "--kube-context",
-                context,
-                "upgrade",
-                "--install",
-                "dex",
-                "dex/dex",
-                "--namespace",
-                "dex",
-                "--values",
-                _path("addons/auth/dex/values.yaml"),
-                "--wait",
-            ]
-        )
-        if addon_installed("istio-system", context):
-            run(
-                [
-                    "kubectl",
-                    "--context",
-                    context,
-                    "apply",
-                    "-f",
-                    _path("addons/auth/dex/httproute.yaml"),
-                ]
-            )
-            dex_ip = capture(
-                [
-                    "kubectl",
-                    "--context",
-                    context,
-                    "get",
-                    "svc",
-                    "dex",
-                    "-n",
-                    "dex",
-                    "-o",
-                    "jsonpath={.spec.clusterIP}",
-                ]
-            )
-            with open(_path("addons/auth/dex/serviceentry.yaml")) as f:
-                serviceentry = f.read().replace("DEX_CLUSTER_IP", dex_ip)
-            proc = subprocess.run(
-                ["kubectl", "--context", context, "apply", "-f", "-"],
-                input=serviceentry,
-                text=True,
-            )
-            if proc.returncode != 0:
-                sys.exit(proc.returncode)
+        _install_dex(context, runtime)
         click.echo("dex synced")
+        synced = True
 
     if addon_installed("argocd", context):
         click.echo("syncing argocd...")
-        run(["helm", "repo", "update", "argo"])
-        values_args = ["--values", _path("addons/gitops/argocd/values.yaml")]
-        if addon_installed("istio-system", context):
-            values_args += [
-                "--values",
-                _path("addons/gitops/argocd/values-mesh.yaml"),
-            ]
-        run(
-            [
-                "helm",
-                "--kube-context",
-                context,
-                "upgrade",
-                "--install",
-                "argocd",
-                "argo/argo-cd",
-                "--namespace",
-                "argocd",
-            ]
-            + values_args
-            + ["--wait"]
-        )
+        _install_argocd(context, runtime)
         click.echo("argocd synced")
-
-    if addon_installed("flux-system", context):
+        synced = True
+    elif addon_installed("flux-system", context):
         helm_check = subprocess.run(
             [
                 "helm",
@@ -960,71 +846,16 @@ def sync(ctx):
         )
         if helm_check.returncode == 0:
             click.echo("syncing flux-operator...")
-            run(
-                [
-                    "helm",
-                    "upgrade",
-                    "--install",
-                    "flux-operator",
-                    "oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator",
-                    "--kube-context",
-                    context,
-                    "--namespace",
-                    "flux-system",
-                    "--values",
-                    _path("addons/gitops/flux-operator/values.yaml"),
-                    "--wait",
-                ]
-            )
-            run(
-                [
-                    "kubectl",
-                    "--context",
-                    context,
-                    "apply",
-                    "--server-side",
-                    "-f",
-                    _path("addons/gitops/flux-operator/instance.yaml"),
-                ]
-            )
-            run(
-                [
-                    "kubectl",
-                    "--context",
-                    context,
-                    "apply",
-                    "-f",
-                    _path("addons/gitops/flux-operator/rbac.yaml"),
-                    "-f",
-                    _path("addons/tenants/flux-operator.yaml"),
-                ]
-            )
-            if addon_installed("istio-system", context):
-                run(
-                    [
-                        "kubectl",
-                        "--context",
-                        context,
-                        "apply",
-                        "-f",
-                        _path("addons/gitops/flux-operator/httproute.yaml"),
-                    ]
-                )
+            _install_flux_operator(context, runtime)
             click.echo("flux-operator synced")
         else:
             click.echo("syncing flux...")
-            run(
-                [
-                    "kubectl",
-                    "--context",
-                    context,
-                    "apply",
-                    "--server-side",
-                    "-f",
-                    _path("addons/gitops/flux/install.yaml"),
-                ]
-            )
+            _install_flux(context)
             click.echo("flux synced")
+        synced = True
+
+    if not synced:
+        click.echo("nothing to sync")
 
 
 @cli.command()
