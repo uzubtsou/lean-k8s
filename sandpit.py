@@ -467,8 +467,8 @@ def _install_argocd(context, runtime):
     run(["helm", "repo", "add", "argo", "https://argoproj.github.io/argo-helm"])
     run(["helm", "repo", "update", "argo"])
     values_args = ["--values", _path("addons/gitops/argocd/values.yaml")]
-    if addon_installed("istio-system", context):
-        click.echo("istio detected, enabling HTTPRoute for argocd")
+    if addon_type_installed("mesh", context):
+        click.echo("mesh detected, enabling HTTPRoute for argocd")
         values_args += [
             "--values",
             _path("addons/gitops/argocd/values-mesh.yaml"),
