@@ -1,0 +1,3 @@
+---
+prometheus:
+  address: http://prometheus-server.monitoring.svc.cluster.local

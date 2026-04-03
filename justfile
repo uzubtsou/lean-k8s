@@ -39,6 +39,14 @@ auth provider="dex":
 gitops provider="flux":
     @uv run sandpit.py --context {{ context }} {{ _runtime_flag }} gitops {{ provider }}
 
+# Install progressive delivery addon: just progressive flagger
+progressive provider="flagger":
+    @uv run sandpit.py --context {{ context }} {{ _runtime_flag }} progressive {{ provider }}
+
+# Install observability addon: just observability prometheus
+observability provider="prometheus":
+    @uv run sandpit.py --context {{ context }} {{ _runtime_flag }} observability {{ provider }}
+
 # Sync (upgrade) all installed addons to their latest versions
 sync:
     @uv run sandpit.py --context {{ context }} {{ _runtime_flag }} sync

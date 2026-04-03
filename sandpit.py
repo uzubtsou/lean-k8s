@@ -69,6 +69,47 @@ def addon_installed(namespace, ctx):
     return bool(out)
 
 
+def addon_type_installed(addon_type, ctx):
+    """Return the addon name if any namespace carries the given addon type label, else None."""
+    out = capture(
+        [
+            "kubectl",
+            "--context",
+            ctx,
+            "get",
+            "namespaces",
+            f"--selector=sand.pit.im/addon-type={addon_type}",
+            "--no-headers",
+            r"-o=custom-columns=:.metadata.labels.sand\.pit\.im/addon",
+        ]
+    )
+    names = [n for n in out.splitlines() if n.strip()]
+    return names[0] if names else None
+
+
+def label_addon_namespace(namespace, addon, addon_type, ctx):
+    """Apply sand.pit.im/addon and sand.pit.im/addon-type labels to a namespace.
+
+    These labels cannot live in addon YAML manifests for Helm-based addons because
+    Helm's --create-namespace flag creates the namespace without applying chart labels.
+    Keeping the labelling here, in one place, makes the limitation explicit and ensures
+    all addon types are handled consistently.
+    """
+    run(
+        [
+            "kubectl",
+            "--context",
+            ctx,
+            "label",
+            "namespace",
+            namespace,
+            f"sand.pit.im/addon={addon}",
+            f"sand.pit.im/addon-type={addon_type}",
+            "--overwrite",
+        ]
+    )
+
+
 def die(msg):
     """Print an error message to stderr and exit 1."""
     click.echo(f"error: {msg}", err=True)
@@ -349,18 +390,7 @@ def _install_istio(context, runtime):
     )
     if proc.returncode != 0:
         sys.exit(proc.returncode)
-    run(
-        [
-            "kubectl",
-            "label",
-            "namespace",
-            "istio-ingress",
-            "sand.pit.im/addon=istio",
-            "--context",
-            context,
-            "--overwrite",
-        ]
-    )
+    label_addon_namespace("istio-ingress", "istio", "mesh", context)
     run(
         [
             "kubectl",
@@ -394,18 +424,7 @@ def _install_dex(context, runtime):
             "--wait",
         ]
     )
-    run(
-        [
-            "kubectl",
-            "--context",
-            context,
-            "label",
-            "namespace",
-            "dex",
-            "sand.pit.im/addon=dex",
-            "--overwrite",
-        ]
-    )
+    label_addon_namespace("dex", "dex", "auth", context)
     if addon_installed("istio-system", context):
         run(
             [
@@ -470,18 +489,7 @@ def _install_argocd(context, runtime):
         + values_args
         + ["--wait"]
     )
-    run(
-        [
-            "kubectl",
-            "--context",
-            context,
-            "label",
-            "namespace",
-            "argocd",
-            "sand.pit.im/addon=argocd",
-            "--overwrite",
-        ]
-    )
+    label_addon_namespace("argocd", "argocd", "gitops", context)
 
 
 def _install_flux(context):
@@ -497,6 +505,7 @@ def _install_flux(context):
             _path("addons/gitops/flux/install.yaml"),
         ]
     )
+    label_addon_namespace("flux-system", "flux", "gitops", context)
 
 
 def _install_flux_operator(context, runtime):
@@ -518,18 +527,7 @@ def _install_flux_operator(context, runtime):
             "--wait",
         ]
     )
-    run(
-        [
-            "kubectl",
-            "--context",
-            context,
-            "label",
-            "namespace",
-            "flux-system",
-            "sand.pit.im/addon=flux-operator",
-            "--overwrite",
-        ]
-    )
+    label_addon_namespace("flux-system", "flux-operator", "gitops", context)
     run(
         [
             "kubectl",
@@ -567,8 +565,74 @@ def _install_flux_operator(context, runtime):
         )
 
 
+def _install_flagger(context, runtime):
+    """Install or upgrade Flagger."""
+    run(["helm", "repo", "add", "flagger", "https://flagger.app"])
+    run(["helm", "repo", "update", "flagger"])
+    values_args = ["--values", _path("addons/progressive/flagger/values.yaml")]
+    if addon_type_installed("observability", context):
+        click.echo("observability detected, configuring Flagger with Prometheus")
+        values_args += [
+            "--values",
+            _path("addons/progressive/flagger/values-observability.yaml"),
+        ]
+    run(
+        [
+            "helm",
+            "upgrade",
+            "--install",
+            "flagger",
+            "flagger/flagger",
+            "--kube-context",
+            context,
+            "--namespace",
+            "flagger-system",
+            "--create-namespace",
+        ]
+        + values_args
+        + ["--wait"]
+    )
+    label_addon_namespace("flagger-system", "flagger", "progressive", context)
+
+
+def _install_prometheus(context, runtime):
+    """Install or upgrade Prometheus."""
+    run(
+        [
+            "helm",
+            "repo",
+            "add",
+            "prometheus-community",
+            "https://prometheus-community.github.io/helm-charts",
+        ]
+    )
+    run(["helm", "repo", "update", "prometheus-community"])
+    run(
+        [
+            "helm",
+            "upgrade",
+            "--install",
+            "prometheus",
+            "prometheus-community/prometheus",
+            "--kube-context",
+            context,
+            "--namespace",
+            "monitoring",
+            "--create-namespace",
+            "--values",
+            _path("addons/observability/prometheus/values.yaml"),
+            "--wait",
+        ]
+    )
+    label_addon_namespace("monitoring", "prometheus", "observability", context)
+
+
 def _do_mesh(context, provider, runtime):
     _do_up(context, runtime)
+
+    existing = addon_type_installed("mesh", context)
+    if existing and existing != provider:
+        die(f"mesh addon '{existing}' is already installed")
 
     if provider == "istio":
         if addon_installed("istio-system", context):
@@ -608,12 +672,16 @@ def _do_mesh(context, provider, runtime):
 def _do_auth(context, provider, runtime):
     _do_up(context, runtime)
 
-    if provider == "dex":
-        if not addon_installed("istio-system", context):
-            die("no mesh installed — run 'just mesh' first")
-        if addon_installed("dex", context):
-            click.echo("dex is already installed, skipping")
+    existing = addon_type_installed("auth", context)
+    if existing:
+        if existing == provider:
+            click.echo(f"{existing} is already installed, skipping")
             return
+        die(f"auth addon '{existing}' is already installed")
+
+    if provider == "dex":
+        if not addon_type_installed("mesh", context):
+            die("no mesh addon installed — run 'just mesh' first")
 
         _install_dex(context, runtime)
     else:
@@ -623,23 +691,17 @@ def _do_auth(context, provider, runtime):
 def _do_gitops(context, provider, runtime):
     _do_up(context, runtime)
 
-    if provider == "flux":
-        if addon_installed("argocd", context):
-            click.echo("argocd is already installed")
-            sys.exit(0)
-        if addon_installed("flux-system", context):
-            click.echo("flux is already installed, skipping")
+    existing = addon_type_installed("gitops", context)
+    if existing:
+        if existing == provider:
+            click.echo(f"{existing} is already installed, skipping")
             return
+        die(f"gitops addon '{existing}' is already installed")
+
+    if provider == "flux":
         _install_flux(context)
 
     elif provider == "argocd":
-        if addon_installed("flux-system", context):
-            click.echo("flux is already installed")
-            sys.exit(0)
-        if addon_installed("argocd", context):
-            click.echo("argocd is already installed, skipping")
-            return
-
         _install_argocd(context, runtime)
 
         password_b64 = capture(
@@ -664,15 +726,51 @@ def _do_gitops(context, provider, runtime):
         click.echo(f"  password: {password}")
 
     elif provider == "flux-operator":
-        if addon_installed("argocd", context):
-            click.echo("argocd is already installed")
-            sys.exit(0)
         _install_flux_operator(context, runtime)
     else:
         die(
             f"unknown gitops provider '{provider}'"
             " — available: flux, argocd, flux-operator"
         )
+
+
+def _do_progressive(context, provider, runtime):
+    _do_up(context, runtime)
+
+    if provider == "flagger":
+        if not addon_type_installed("mesh", context):
+            die("no mesh addon installed — run 'just mesh' first")
+
+        existing = addon_type_installed("progressive", context)
+        if existing:
+            click.echo(f"{existing} is already installed, skipping")
+            return
+
+        if not addon_type_installed("observability", context):
+            click.echo(
+                "warning: no observability addon installed — canary analysis will not be available"
+            )
+            click.echo("         run 'just observability prometheus' to enable it")
+
+        _install_flagger(context, runtime)
+    else:
+        die(f"unknown progressive provider '{provider}' — available: flagger")
+
+
+def _do_observability(context, provider, runtime):
+    _do_up(context, runtime)
+
+    existing = addon_type_installed("observability", context)
+    if existing:
+        if existing == provider:
+            click.echo(f"{existing} is already installed, skipping")
+            return
+        die(f"observability addon '{existing}' is already installed")
+
+    if provider == "prometheus":
+        _install_prometheus(context, runtime)
+    else:
+        die(f"unknown observability provider '{provider}' — available: prometheus")
 
 
 # ---------------------------------------------------------------------------
@@ -737,14 +835,17 @@ def status(ctx):
             context,
             "--selector=sand.pit.im/addon",
             "--no-headers",
-            r"-o=custom-columns=:.metadata.labels.sand\.pit\.im/addon",
+            r"-o=custom-columns=ADDON:.metadata.labels.sand\.pit\.im/addon,TYPE:.metadata.labels.sand\.pit\.im/addon-type",
         ]
     )
-    addons = sorted(set(a for a in addons_raw.splitlines() if a.strip()))
-    if addons:
-        click.echo(f"{'ADDONS':<16}")
-        for name in addons:
-            click.echo(f"  {name}")
+    rows = sorted(set(line for line in addons_raw.splitlines() if line.strip()))
+    if rows:
+        click.echo(f"{'ADDON':<18}{'TYPE'}")
+        for row in rows:
+            parts = row.split()
+            name = parts[0] if parts else ""
+            addon_type = parts[1] if len(parts) > 1 else ""
+            click.echo(f"  {name:<16}{addon_type}")
     else:
         click.echo("no addons installed")
 
@@ -807,6 +908,22 @@ def gitops(ctx, provider):
 
 
 @cli.command()
+@click.argument("provider", default="flagger")
+@click.pass_context
+def progressive(ctx, provider):
+    """Install progressive delivery addon (default: flagger). Requires mesh."""
+    _do_progressive(ctx.obj["context"], provider, ctx.obj["runtime"])
+
+
+@cli.command()
+@click.argument("provider", default="prometheus")
+@click.pass_context
+def observability(ctx, provider):
+    """Install observability addon (default: prometheus). Implies up."""
+    _do_observability(ctx.obj["context"], provider, ctx.obj["runtime"])
+
+
+@cli.command()
 @click.pass_context
 def sync(ctx):
     """Upgrade all installed addons to their latest versions."""
@@ -852,6 +969,18 @@ def sync(ctx):
             click.echo("syncing flux...")
             _install_flux(context)
             click.echo("flux synced")
+        synced = True
+
+    if addon_installed("monitoring", context):
+        click.echo("syncing prometheus...")
+        _install_prometheus(context, runtime)
+        click.echo("prometheus synced")
+        synced = True
+
+    if addon_installed("flagger-system", context):
+        click.echo("syncing flagger...")
+        _install_flagger(context, runtime)
+        click.echo("flagger synced")
         synced = True
 
     if not synced:
