@@ -696,7 +696,12 @@ def _do_gitops(context, provider, runtime):
         if existing == provider:
             click.echo(f"{existing} is already installed, skipping")
             return
-        die(f"gitops addon '{existing}' is already installed")
+        if existing == "flux" and provider == "flux-operator":
+            click.confirm(
+                "flux is already installed. Migrate to flux-operator?", abort=True
+            )
+        else:
+            die(f"gitops addon '{existing}' is already installed")
 
     if provider == "flux":
         _install_flux(context)
