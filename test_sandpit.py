@@ -34,5 +34,27 @@ def test_provider_arguments():
         assert install.call_args.args[1] == "argocd"
 
 
+def test_install_flux():
+    with (
+        patch.object(sandpit, "run") as run,
+        patch.object(sandpit, "label_addon_namespace") as label,
+    ):
+        sandpit._install_flux("test-context")
+
+    run.assert_called_once_with(
+        [
+            "kubectl",
+            "--context",
+            "test-context",
+            "apply",
+            "--server-side",
+            "-f",
+            "https://github.com/fluxcd/flux2/releases/latest/download/install.yaml",
+        ]
+    )
+    label.assert_called_once_with("flux-system", "flux", "gitops", "test-context")
+
+
 if __name__ == "__main__":
     test_provider_arguments()
+    test_install_flux()
