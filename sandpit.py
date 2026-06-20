@@ -502,7 +502,7 @@ def _install_flux(context):
             "apply",
             "--server-side",
             "-f",
-            _path("addons/gitops/flux/install.yaml"),
+            "https://github.com/fluxcd/flux2/releases/latest/download/install.yaml",
         ]
     )
     label_addon_namespace("flux-system", "flux", "gitops", context)
