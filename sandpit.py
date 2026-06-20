@@ -627,65 +627,59 @@ def _install_prometheus(context, runtime):
     label_addon_namespace("monitoring", "prometheus", "observability", context)
 
 
-def _do_mesh(context, provider, runtime):
+def _do_mesh(context, runtime):
     _do_up(context, runtime)
 
     existing = addon_type_installed("mesh", context)
-    if existing and existing != provider:
+    if existing and existing != "istio":
         die(f"mesh addon '{existing}' is already installed")
 
-    if provider == "istio":
-        if addon_installed("istio-system", context):
-            click.echo("istio is already installed, skipping")
-            return
+    if addon_installed("istio-system", context):
+        click.echo("istio is already installed, skipping")
+        return
 
-        # Install Gateway API CRDs if not present
-        crd_check = subprocess.run(
+    # Install Gateway API CRDs if not present
+    crd_check = subprocess.run(
+        [
+            "kubectl",
+            "get",
+            "crd",
+            "gateways.gateway.networking.k8s.io",
+            "--context",
+            context,
+        ],
+        capture_output=True,
+    )
+    if crd_check.returncode != 0:
+        run(
             [
                 "kubectl",
-                "get",
-                "crd",
-                "gateways.gateway.networking.k8s.io",
+                "apply",
+                "-f",
+                "https://github.com/kubernetes-sigs/gateway-api"
+                "/releases/latest/download/standard-install.yaml",
                 "--context",
                 context,
-            ],
-            capture_output=True,
+            ]
         )
-        if crd_check.returncode != 0:
-            run(
-                [
-                    "kubectl",
-                    "apply",
-                    "-f",
-                    "https://github.com/kubernetes-sigs/gateway-api"
-                    "/releases/latest/download/standard-install.yaml",
-                    "--context",
-                    context,
-                ]
-            )
 
-        _install_istio(context, runtime)
-    else:
-        die(f"unknown mesh provider '{provider}' — available: istio")
+    _install_istio(context, runtime)
 
 
-def _do_auth(context, provider, runtime):
+def _do_auth(context, runtime):
     _do_up(context, runtime)
 
     existing = addon_type_installed("auth", context)
+    if existing == "dex":
+        click.echo("dex is already installed, skipping")
+        return
     if existing:
-        if existing == provider:
-            click.echo(f"{existing} is already installed, skipping")
-            return
         die(f"auth addon '{existing}' is already installed")
 
-    if provider == "dex":
-        if not addon_type_installed("mesh", context):
-            die("no mesh addon installed — run 'just mesh' first")
+    if not addon_type_installed("mesh", context):
+        die("no mesh addon installed — run 'just mesh' first")
 
-        _install_dex(context, runtime)
-    else:
-        die(f"unknown auth provider '{provider}' — available: dex")
+    _install_dex(context, runtime)
 
 
 def _do_gitops(context, provider, runtime):
@@ -739,43 +733,37 @@ def _do_gitops(context, provider, runtime):
         )
 
 
-def _do_progressive(context, provider, runtime):
+def _do_progressive(context, runtime):
     _do_up(context, runtime)
 
-    if provider == "flagger":
-        if not addon_type_installed("mesh", context):
-            die("no mesh addon installed — run 'just mesh' first")
+    if not addon_type_installed("mesh", context):
+        die("no mesh addon installed — run 'just mesh' first")
 
-        existing = addon_type_installed("progressive", context)
-        if existing:
-            click.echo(f"{existing} is already installed, skipping")
-            return
+    existing = addon_type_installed("progressive", context)
+    if existing:
+        click.echo(f"{existing} is already installed, skipping")
+        return
 
-        if not addon_type_installed("observability", context):
-            click.echo(
-                "warning: no observability addon installed — canary analysis will not be available"
-            )
-            click.echo("         run 'just observability prometheus' to enable it")
+    if not addon_type_installed("observability", context):
+        click.echo(
+            "warning: no observability addon installed — canary analysis will not be available"
+        )
+        click.echo("         run 'just observability' to enable it")
 
-        _install_flagger(context, runtime)
-    else:
-        die(f"unknown progressive provider '{provider}' — available: flagger")
+    _install_flagger(context, runtime)
 
 
-def _do_observability(context, provider, runtime):
+def _do_observability(context, runtime):
     _do_up(context, runtime)
 
     existing = addon_type_installed("observability", context)
+    if existing == "prometheus":
+        click.echo("prometheus is already installed, skipping")
+        return
     if existing:
-        if existing == provider:
-            click.echo(f"{existing} is already installed, skipping")
-            return
         die(f"observability addon '{existing}' is already installed")
 
-    if provider == "prometheus":
-        _install_prometheus(context, runtime)
-    else:
-        die(f"unknown observability provider '{provider}' — available: prometheus")
+    _install_prometheus(context, runtime)
 
 
 # ---------------------------------------------------------------------------
@@ -889,19 +877,17 @@ def start(ctx):
 
 
 @cli.command()
-@click.argument("provider", default="istio")
 @click.pass_context
-def mesh(ctx, provider):
-    """Install service mesh (default: istio). Implies up."""
-    _do_mesh(ctx.obj["context"], provider, ctx.obj["runtime"])
+def mesh(ctx):
+    """Install Istio service mesh. Implies up."""
+    _do_mesh(ctx.obj["context"], ctx.obj["runtime"])
 
 
 @cli.command()
-@click.argument("provider", default="dex")
 @click.pass_context
-def auth(ctx, provider):
-    """Install auth provider (default: dex). Requires mesh."""
-    _do_auth(ctx.obj["context"], provider, ctx.obj["runtime"])
+def auth(ctx):
+    """Install Dex auth provider. Requires mesh."""
+    _do_auth(ctx.obj["context"], ctx.obj["runtime"])
 
 
 @cli.command()
@@ -913,19 +899,17 @@ def gitops(ctx, provider):
 
 
 @cli.command()
-@click.argument("provider", default="flagger")
 @click.pass_context
-def progressive(ctx, provider):
-    """Install progressive delivery addon (default: flagger). Requires mesh."""
-    _do_progressive(ctx.obj["context"], provider, ctx.obj["runtime"])
+def progressive(ctx):
+    """Install Flagger progressive delivery. Requires mesh."""
+    _do_progressive(ctx.obj["context"], ctx.obj["runtime"])
 
 
 @cli.command()
-@click.argument("provider", default="prometheus")
 @click.pass_context
-def observability(ctx, provider):
-    """Install observability addon (default: prometheus). Implies up."""
-    _do_observability(ctx.obj["context"], provider, ctx.obj["runtime"])
+def observability(ctx):
+    """Install Prometheus observability. Implies up."""
+    _do_observability(ctx.obj["context"], ctx.obj["runtime"])
 
 
 @cli.command()
@@ -997,7 +981,7 @@ def sync(ctx):
 def stack(ctx):
     """Install full stack: mesh (istio) + gitops (argocd). Implies up."""
     context = ctx.obj["context"]
-    _do_mesh(context, "istio", ctx.obj["runtime"])
+    _do_mesh(context, ctx.obj["runtime"])
     _do_gitops(context, "argocd", ctx.obj["runtime"])
 
 

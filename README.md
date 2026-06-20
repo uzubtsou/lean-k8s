@@ -19,11 +19,11 @@ just status   # show active clusters and installed addons
 
 ### Installing addons
 
-Addons are grouped by category. Each category has a default provider.
+Addons are grouped by category. GitOps supports multiple providers.
 
 ```bash
-just mesh                   # install Istio (default mesh provider)
-just auth dex               # install Dex OIDC provider
+just mesh                   # install Istio
+just auth                   # install Dex OIDC provider
 just gitops argocd          # install ArgoCD
 just gitops flux-operator   # install Flux Operator with web UI + OIDC via Dex
 just stack                  # install everything: mesh + gitops
@@ -39,7 +39,7 @@ just gitops flux
 
 When Istio is installed, gitops recipes automatically detect it and configure HTTPRoutes. For example, ArgoCD becomes reachable at `http://argocd.sand.pit.im` and the Flux Operator web UI at `http://flux.sand.pit.im`.
 
-When Dex is installed, `just gitops flux-operator` detects it and enables OIDC authentication in the Flux web UI. Install order: `just mesh` → `just auth dex` → `just gitops flux-operator`.
+When Dex is installed, `just gitops flux-operator` detects it and enables OIDC authentication in the Flux web UI. Install order: `just mesh` → `just auth` → `just gitops flux-operator`.
 
 ## Configurations
 
@@ -51,11 +51,11 @@ When Dex is installed, `just gitops flux-operator` detects it and enables OIDC a
 
 **Networking / Mesh**
 
-- [Istio](./addons/networking/istio/) - Service mesh with Gateway API (`just mesh istio`)
+- [Istio](./addons/networking/istio/) - Service mesh with Gateway API (`just mesh`)
 
 **Auth**
 
-- [Dex](./addons/auth/dex/) - OIDC identity provider with static users (`just auth dex`)
+- [Dex](./addons/auth/dex/) - OIDC identity provider with static users (`just auth`)
 
 **GitOps**
 
