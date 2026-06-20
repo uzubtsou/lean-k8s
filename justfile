@@ -27,25 +27,25 @@ stop:
 start:
     @uv run sandpit.py --context {{ context }} {{ _runtime_flag }} start
 
-# Install service mesh: just mesh istio
-mesh provider="istio":
-    @uv run sandpit.py --context {{ context }} {{ _runtime_flag }} mesh {{ provider }}
+# Install Istio service mesh
+mesh:
+    @uv run sandpit.py --context {{ context }} {{ _runtime_flag }} mesh
 
-# Install auth provider: just auth dex
-auth provider="dex":
-    @uv run sandpit.py --context {{ context }} {{ _runtime_flag }} auth {{ provider }}
+# Install Dex auth provider
+auth:
+    @uv run sandpit.py --context {{ context }} {{ _runtime_flag }} auth
 
 # Install gitops provider: just gitops argocd|flux-operator
 gitops provider="flux":
     @uv run sandpit.py --context {{ context }} {{ _runtime_flag }} gitops {{ provider }}
 
-# Install progressive delivery addon: just progressive flagger
-progressive provider="flagger":
-    @uv run sandpit.py --context {{ context }} {{ _runtime_flag }} progressive {{ provider }}
+# Install Flagger progressive delivery
+progressive:
+    @uv run sandpit.py --context {{ context }} {{ _runtime_flag }} progressive
 
-# Install observability addon: just observability prometheus
-observability provider="prometheus":
-    @uv run sandpit.py --context {{ context }} {{ _runtime_flag }} observability {{ provider }}
+# Install Prometheus observability
+observability:
+    @uv run sandpit.py --context {{ context }} {{ _runtime_flag }} observability
 
 # Sync (upgrade) all installed addons to their latest versions
 sync:
