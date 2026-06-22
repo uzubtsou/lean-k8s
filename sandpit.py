@@ -69,8 +69,8 @@ def addon_installed(namespace, ctx):
     return bool(out)
 
 
-def addon_type_installed(addon_type, ctx):
-    """Return the addon name if any namespace carries the given addon type label, else None."""
+def addons_of_type(addon_type, ctx):
+    """Return addon names from namespaces carrying the given addon type label."""
     out = capture(
         [
             "kubectl",
@@ -83,7 +83,12 @@ def addon_type_installed(addon_type, ctx):
             r"-o=custom-columns=:.metadata.labels.sand\.pit\.im/addon",
         ]
     )
-    names = [n for n in out.splitlines() if n.strip()]
+    return [name.strip() for name in out.splitlines() if name.strip()]
+
+
+def addon_type_installed(addon_type, ctx):
+    """Return the first installed addon of a type, if any."""
+    names = addons_of_type(addon_type, ctx)
     return names[0] if names else None
 
 
@@ -685,17 +690,22 @@ def _do_auth(context, runtime):
 def _do_gitops(context, provider, runtime):
     _do_up(context, runtime)
 
-    existing = addon_type_installed("gitops", context)
+    existing = addons_of_type("gitops", context)
+    if provider in existing:
+        click.echo(f"{provider} is already installed, skipping")
+        return
     if existing:
-        if existing == provider:
-            click.echo(f"{existing} is already installed, skipping")
-            return
-        if existing == "flux" and provider == "flux-operator":
+        if "flux" in existing and provider == "flux-operator":
             click.confirm(
                 "flux is already installed. Migrate to flux-operator?", abort=True
             )
+        elif "flux-operator" in existing and provider == "flux":
+            die("flux-operator is already installed")
         else:
-            die(f"gitops addon '{existing}' is already installed")
+            click.confirm(
+                f"{', '.join(existing)} already installed. Install {provider} too?",
+                abort=True,
+            )
 
     if provider == "flux":
         _install_flux(context)
@@ -894,7 +904,7 @@ def auth(ctx):
 @click.argument("provider", default="flux")
 @click.pass_context
 def gitops(ctx, provider):
-    """Install GitOps provider (default: flux). Mutually exclusive."""
+    """Install a GitOps provider (default: flux)."""
     _do_gitops(ctx.obj["context"], provider, ctx.obj["runtime"])
 
 
@@ -937,7 +947,7 @@ def sync(ctx):
         _install_argocd(context, runtime)
         click.echo("argocd synced")
         synced = True
-    elif addon_installed("flux-system", context):
+    if addon_installed("flux-system", context):
         helm_check = subprocess.run(
             [
                 "helm",

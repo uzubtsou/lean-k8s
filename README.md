@@ -30,12 +30,15 @@ just stack                  # install everything: mesh + gitops
 just sync                   # upgrade all installed addons to latest
 ```
 
-Only one GitOps provider can be active at a time — installing a second one will print an error. To switch providers, recreate the cluster:
+#### Running Argo CD and Flux together
+
+Argo CD and Flux can run in the same cluster. Installing the second provider asks for confirmation, and `just sync` upgrades both when both are installed:
 
 ```bash
-just down && just up
 just gitops flux
 ```
+
+Keep each provider responsible for separate resources to avoid reconciliation conflicts. `flux` and `flux-operator` are alternative Flux installation modes: they do not run together, and moving from Flux to Flux Operator uses the migration confirmation instead.
 
 When Istio is installed, gitops recipes automatically detect it and configure HTTPRoutes. For example, ArgoCD becomes reachable at `http://argocd.sand.pit.im` and the Flux Operator web UI at `http://flux.sand.pit.im`.
 

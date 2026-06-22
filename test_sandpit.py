@@ -55,6 +55,22 @@ def test_install_flux():
     label.assert_called_once_with("flux-system", "flux", "gitops", "test-context")
 
 
+def test_install_second_gitops_provider_requires_confirmation():
+    with (
+        patch.object(sandpit, "_do_up"),
+        patch.object(sandpit, "addons_of_type", return_value=["argocd"]),
+        patch.object(sandpit.click, "confirm") as confirm,
+        patch.object(sandpit, "_install_flux") as install,
+    ):
+        sandpit._do_gitops("test-context", "flux", object())
+
+    confirm.assert_called_once_with(
+        "argocd already installed. Install flux too?", abort=True
+    )
+    install.assert_called_once_with("test-context")
+
+
 if __name__ == "__main__":
     test_provider_arguments()
     test_install_flux()
+    test_install_second_gitops_provider_requires_confirmation()
