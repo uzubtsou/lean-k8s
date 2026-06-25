@@ -70,7 +70,21 @@ def test_install_second_gitops_provider_requires_confirmation():
     install.assert_called_once_with("test-context")
 
 
+def test_stack_uses_flux():
+    runner = CliRunner()
+    with (
+        patch.object(sandpit, "_check_runtime_binary"),
+        patch.object(sandpit, "_do_mesh"),
+        patch.object(sandpit, "_do_gitops") as gitops,
+    ):
+        result = runner.invoke(sandpit.cli, ["stack"])
+
+    assert result.exit_code == 0
+    assert gitops.call_args.args[1] == "flux"
+
+
 if __name__ == "__main__":
     test_provider_arguments()
     test_install_flux()
     test_install_second_gitops_provider_requires_confirmation()
+    test_stack_uses_flux()

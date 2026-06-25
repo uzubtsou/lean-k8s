@@ -989,10 +989,10 @@ def sync(ctx):
 @cli.command()
 @click.pass_context
 def stack(ctx):
-    """Install full stack: mesh (istio) + gitops (argocd). Implies up."""
+    """Install full stack: mesh (istio) + gitops (flux). Implies up."""
     context = ctx.obj["context"]
     _do_mesh(context, ctx.obj["runtime"])
-    _do_gitops(context, "argocd", ctx.obj["runtime"])
+    _do_gitops(context, "flux", ctx.obj["runtime"])
 
 
 # ---------------------------------------------------------------------------

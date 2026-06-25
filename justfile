@@ -35,7 +35,7 @@ mesh:
 auth:
     @uv run sandpit.py --context {{ context }} {{ _runtime_flag }} auth
 
-# Install gitops provider: just gitops argocd|flux-operator
+# Install gitops provider: just gitops flux|argocd|flux-operator
 gitops provider="flux":
     @uv run sandpit.py --context {{ context }} {{ _runtime_flag }} gitops {{ provider }}
 

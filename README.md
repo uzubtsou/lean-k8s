@@ -24,6 +24,7 @@ Addons are grouped by category. GitOps supports multiple providers.
 ```bash
 just mesh                   # install Istio
 just auth                   # install Dex OIDC provider
+just gitops flux            # install Flux
 just gitops argocd          # install ArgoCD
 just gitops flux-operator   # install Flux Operator with web UI + OIDC via Dex
 just stack                  # install everything: mesh + gitops
