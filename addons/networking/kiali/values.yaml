@@ -1,0 +1,7 @@
+---
+auth:
+  strategy: anonymous
+external_services:
+  prometheus:
+    enabled: true
+    url: http://prometheus-server.monitoring.svc.cluster.local

@@ -24,6 +24,8 @@ Addons are grouped by category. GitOps supports multiple providers.
 ```bash
 just mesh                   # install Istio
 just auth                   # install Dex OIDC provider
+just prometheus             # install shared Prometheus
+just kiali                  # install Kiali at http://kiali.sand.pit.im
 just gitops flux            # install Flux
 just gitops argocd          # install ArgoCD
 just gitops flux-operator   # install Flux Operator with web UI + OIDC via Dex
@@ -41,7 +43,7 @@ just gitops flux
 
 Keep each provider responsible for separate resources to avoid reconciliation conflicts. `flux` and `flux-operator` are alternative Flux installation modes: they do not run together, and moving from Flux to Flux Operator uses the migration confirmation instead.
 
-When Istio is installed, gitops recipes automatically detect it and configure HTTPRoutes. For example, ArgoCD becomes reachable at `http://argocd.sand.pit.im` and the Flux Operator web UI at `http://flux.sand.pit.im`.
+When Istio is installed, exposed apps use HTTPRoutes under `*.sand.pit.im`. For example, ArgoCD becomes reachable at `http://argocd.sand.pit.im`, the Flux Operator web UI at `http://flux.sand.pit.im`, and Kiali at `http://kiali.sand.pit.im`.
 
 When Dex is installed, `just gitops flux-operator` detects it and enables OIDC authentication in the Flux web UI. Install order: `just mesh` → `just auth` → `just gitops flux-operator`.
 
@@ -56,6 +58,11 @@ When Dex is installed, `just gitops flux-operator` detects it and enables OIDC a
 **Networking / Mesh**
 
 - [Istio](./addons/networking/istio/) - Service mesh with Gateway API (`just mesh`)
+- [Kiali](./addons/networking/kiali/) - Istio UI using the shared Prometheus service (`just kiali`)
+
+**Observability**
+
+- [Prometheus](./addons/observability/prometheus/) - Shared metrics backend (`just prometheus`)
 
 **Auth**
 

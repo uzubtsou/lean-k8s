@@ -17,6 +17,8 @@ def test_provider_arguments():
         "auth": "dex",
         "progressive": "flagger",
         "observability": "prometheus",
+        "prometheus": "prometheus",
+        "kiali": "kiali",
     }
     with patch.object(sandpit, "_check_runtime_binary"):
         for command, provider in commands.items():
@@ -83,8 +85,23 @@ def test_stack_uses_flux():
     assert gitops.call_args.args[1] == "flux"
 
 
+def test_kiali_requires_mesh():
+    with (
+        patch.object(sandpit, "_do_up"),
+        patch.object(sandpit, "addon_type_installed", return_value=None),
+        patch.object(sandpit.click, "echo"),
+    ):
+        try:
+            sandpit._do_kiali("test-context", object())
+        except SystemExit as exc:
+            assert exc.code == 1
+        else:
+            raise AssertionError("expected SystemExit")
+
+
 if __name__ == "__main__":
     test_provider_arguments()
     test_install_flux()
     test_install_second_gitops_provider_requires_confirmation()
     test_stack_uses_flux()
+    test_kiali_requires_mesh()

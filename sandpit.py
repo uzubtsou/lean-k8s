@@ -632,6 +632,39 @@ def _install_prometheus(context, runtime):
     label_addon_namespace("monitoring", "prometheus", "observability", context)
 
 
+def _install_kiali(context, runtime):
+    """Install or upgrade Kiali."""
+    run(["helm", "repo", "add", "kiali", "https://kiali.org/helm-charts"])
+    run(["helm", "repo", "update", "kiali"])
+    run(
+        [
+            "helm",
+            "upgrade",
+            "--install",
+            "kiali-server",
+            "kiali/kiali-server",
+            "--kube-context",
+            context,
+            "--namespace",
+            "istio-system",
+            "--values",
+            _path("addons/networking/kiali/values.yaml"),
+            "--wait",
+        ]
+    )
+    label_addon_namespace("istio-system", "kiali", "mesh-ui", context)
+    run(
+        [
+            "kubectl",
+            "--context",
+            context,
+            "apply",
+            "-f",
+            _path("addons/networking/kiali/httproute.yaml"),
+        ]
+    )
+
+
 def _do_mesh(context, runtime):
     _do_up(context, runtime)
 
@@ -774,6 +807,41 @@ def _do_observability(context, runtime):
         die(f"observability addon '{existing}' is already installed")
 
     _install_prometheus(context, runtime)
+
+
+def _do_prometheus(context, runtime):
+    _do_observability(context, runtime)
+
+
+def _do_kiali(context, runtime):
+    _do_up(context, runtime)
+
+    if not addon_type_installed("mesh", context):
+        die("no mesh addon installed — run 'just mesh' first")
+
+    if addon_installed("istio-system", context):
+        helm_check = subprocess.run(
+            [
+                "helm",
+                "--kube-context",
+                context,
+                "status",
+                "kiali-server",
+                "--namespace",
+                "istio-system",
+            ],
+            capture_output=True,
+        )
+        if helm_check.returncode == 0:
+            click.echo("kiali is already installed, skipping")
+            return
+
+    if not addon_type_installed("observability", context):
+        click.echo(
+            "warning: prometheus is not installed — kiali will use the configured service URL when it exists"
+        )
+
+    _install_kiali(context, runtime)
 
 
 # ---------------------------------------------------------------------------
@@ -924,6 +992,20 @@ def observability(ctx):
 
 @cli.command()
 @click.pass_context
+def prometheus(ctx):
+    """Install Prometheus observability. Implies up."""
+    _do_prometheus(ctx.obj["context"], ctx.obj["runtime"])
+
+
+@cli.command()
+@click.pass_context
+def kiali(ctx):
+    """Install Kiali. Requires mesh; uses the shared Prometheus service URL."""
+    _do_kiali(ctx.obj["context"], ctx.obj["runtime"])
+
+
+@cli.command()
+@click.pass_context
 def sync(ctx):
     """Upgrade all installed addons to their latest versions."""
     context = ctx.obj["context"]
@@ -975,6 +1057,25 @@ def sync(ctx):
         _install_prometheus(context, runtime)
         click.echo("prometheus synced")
         synced = True
+
+    if addon_installed("istio-system", context):
+        helm_check = subprocess.run(
+            [
+                "helm",
+                "--kube-context",
+                context,
+                "status",
+                "kiali-server",
+                "--namespace",
+                "istio-system",
+            ],
+            capture_output=True,
+        )
+        if helm_check.returncode == 0:
+            click.echo("syncing kiali...")
+            _install_kiali(context, runtime)
+            click.echo("kiali synced")
+            synced = True
 
     if addon_installed("flagger-system", context):
         click.echo("syncing flagger...")

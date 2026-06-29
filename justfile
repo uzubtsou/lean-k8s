@@ -44,8 +44,16 @@ progressive:
     @uv run sandpit.py --context {{ context }} {{ _runtime_flag }} progressive
 
 # Install Prometheus observability
+prometheus:
+    @uv run sandpit.py --context {{ context }} {{ _runtime_flag }} prometheus
+
+# Install Prometheus observability (old alias)
 observability:
     @uv run sandpit.py --context {{ context }} {{ _runtime_flag }} observability
+
+# Install Kiali service mesh UI
+kiali:
+    @uv run sandpit.py --context {{ context }} {{ _runtime_flag }} kiali
 
 # Sync (upgrade) all installed addons to their latest versions
 sync:
